@@ -124,7 +124,7 @@ async function App() {
     formData.append('file', resumeFile);
 
     try {
-      const response = await axios.post('http://localhost:8000/extract_keywords', formData, {
+      const response = await axios.post('${API_URL}/extract_keywords', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setMatchedKeywords(response.data.keywords);
@@ -158,7 +158,7 @@ async function App() {
         setCurrentKeyword(editableKeywords[i]);
         setProgress(((i + 1) / totalKeywords) * 100);
 
-        const response = await axios.post('http://localhost:8000/scrape_jobs', {
+        const response = await axios.post('${API_URL}/scrape_jobs', {
           keywords: [editableKeywords[i]],
           location,
         });
