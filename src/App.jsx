@@ -8,7 +8,7 @@ import StatsCard from './components/StatsCard';
 import ParticleBackground from './components/ParticleBackground';
 import { triggerConfetti } from './utils/confetti';
 
-async function App() {
+function App() {
   const [resumeFile, setResumeFile] = useState(null);
   const [location, setLocation] = useState('');
   const [matchedKeywords, setMatchedKeywords] = useState([]);
@@ -113,7 +113,7 @@ async function App() {
     if (file) showToast(`📄 ${file.name} uploaded`, 'info');
   };
 
-  const handleParseResume = async () => {
+  const handleParseResume = async () => {  // <-- async here
     if (!resumeFile) return showToast("Please upload a resume first", 'error');
     setIsParsing(true);
     setMatchedKeywords([]);
@@ -124,7 +124,7 @@ async function App() {
     formData.append('file', resumeFile);
 
     try {
-      const response = await axios.post('${API_URL}/extract_keywords', formData, {
+      const response = await axios.post(`${API_URL}/extract_keywords`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setMatchedKeywords(response.data.keywords);
@@ -141,7 +141,7 @@ async function App() {
     }
   };
 
-  const handleScrapeJobs = async () => {
+  const handleScrapeJobs = async () => {  // <-- async here too
     if (!editableKeywords.length) return showToast("No keywords to search", 'error');
     if (!location) return showToast("Please enter location", 'error');
 
@@ -158,7 +158,7 @@ async function App() {
         setCurrentKeyword(editableKeywords[i]);
         setProgress(((i + 1) / totalKeywords) * 100);
 
-        const response = await axios.post('${API_URL}/scrape_jobs', {
+        const response = await axios.post(`${API_URL}/scrape_jobs`, {
           keywords: [editableKeywords[i]],
           location,
         });
@@ -246,12 +246,6 @@ async function App() {
   }));
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-// Then use it in axios calls:
-const response = await axios.post(`${API_URL}/extract_keywords`, formData, {
-  headers: { 'Content-Type': 'multipart/form-data' },
-});
-
 
   return (
     <div className="app-container">
