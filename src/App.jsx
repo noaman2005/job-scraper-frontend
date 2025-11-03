@@ -1,105 +1,54 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState } from 'react';
 import './App.css';
 import Toast from './components/Toast';
 import JobModal from './components/JobModal';
 import ProgressBar from './components/ProgressBar';
 import StatsCard from './components/StatsCard';
 import ParticleBackground from './components/ParticleBackground';
-import { triggerConfetti } from './utils/confetti';
+import { useResume } from './hooks/useResume';
+import { useJobs } from './hooks/useJobs';
+import { useLocalStorage } from './hooks/useLocalStorage';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { API_URL } from './services/api';
 
 function App() {
-  const [resumeFile, setResumeFile] = useState(null);
+  // State
+  const [selectedPlatforms, setSelectedPlatforms] = useState(["indeed"]);
   const [location, setLocation] = useState('');
-  const [matchedKeywords, setMatchedKeywords] = useState([]);
-  const [editableKeywords, setEditableKeywords] = useState([]);
-  const [isParsing, setIsParsing] = useState(false);
-  const [scraping, setScraping] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [filteredJobs, setFilteredJobs] = useState([]);
-  const [favorites, setFavorites] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterCompany, setFilterCompany] = useState('');
-  const [sortBy, setSortBy] = useState('relevance');
+  const [favorites, setFavorites] = useLocalStorage('favorites', []);
+  const [theme, setTheme] = useLocalStorage('theme', 'dark');
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
   const [selectedJob, setSelectedJob] = useState(null);
-  const [progress, setProgress] = useState(0);
-  const [currentKeyword, setCurrentKeyword] = useState('');
-  const [theme, setTheme] = useState('dark');
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [showStats, setShowStats] = useState(false);
 
-  // Load favorites and theme from localStorage
-  useEffect(() => {
-    const savedFavorites = JSON.parse(localStorage.getItem('favorites') || '[]');
-    const savedTheme = localStorage.getItem('theme') || 'dark';
-    setFavorites(savedFavorites);
-    setTheme(savedTheme);
-    document.body.className = savedTheme;
-  }, []);
+  // Hooks
+  const resume = useResume(API_URL, showToast);
+  const jobs = useJobs(API_URL, showToast);
 
-  // Save favorites to localStorage
-  useEffect(() => {
-    localStorage.setItem('favorites', JSON.stringify(favorites));
-  }, [favorites]);
-
-  // Filter and sort jobs
-  useEffect(() => {
-    let filtered = [...jobs];
-
-    // Search filter
-    if (searchQuery) {
-      filtered = filtered.filter(job =>
-        job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        job.company.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    }
-
-    // Company filter
-    if (filterCompany) {
-      filtered = filtered.filter(job => job.company === filterCompany);
-    }
-
-    // Sort
-    if (sortBy === 'company') {
-      filtered.sort((a, b) => a.company.localeCompare(b.company));
-    } else if (sortBy === 'title') {
-      filtered.sort((a, b) => a.title.localeCompare(b.title));
-    }
-
-    // Remove duplicates
-    const uniqueJobs = filtered.filter((job, index, self) =>
-      index === self.findIndex(j => j.link === job.link)
-    );
-
-    setFilteredJobs(uniqueJobs);
-  }, [jobs, searchQuery, filterCompany, sortBy]);
+  // Apply theme
+  React.useEffect(() => {
+    document.body.className = theme;
+  }, [theme]);
 
   // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyPress = (e) => {
-      if (e.key === 's' && e.ctrlKey) {
-        e.preventDefault();
-        if (editableKeywords.length && location) handleScrapeJobs();
-      }
-      if (e.key === 'd' && e.ctrlKey) {
-        e.preventDefault();
-        if (jobs.length) handleDownload('txt');
-      }
-    };
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [editableKeywords, location, jobs]);
+  useKeyboardShortcuts(
+    resume.editableKeywords,
+    location,
+    jobs.filteredJobs,
+    () => jobs.handleScrapeJobs(resume.editableKeywords, location, selectedPlatforms),
+    (format) => jobs.handleDownload(format, jobs.filteredJobs)
+  );
 
-  const showToast = (message, type = 'info') => {
+  // Helper functions
+  function showToast(message, type = 'info') {
     setToast({ show: true, message, type });
     if (soundEnabled) playSound(type);
     setTimeout(() => setToast({ show: false, message: '', type: '' }), 3000);
-  };
+  }
 
   const playSound = (type) => {
     const audio = new Audio(
-      type === 'success' 
+      type === 'success'
         ? 'https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3'
         : 'https://assets.mixkit.co/active_storage/sfx/2955/2955-preview.mp3'
     );
@@ -107,105 +56,27 @@ function App() {
     audio.play().catch(() => {});
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    setResumeFile(file);
-    if (file) showToast(`📄 ${file.name} uploaded`, 'info');
-  };
-
-  const handleParseResume = async () => {  // <-- async here
-    if (!resumeFile) return showToast("Please upload a resume first", 'error');
-    setIsParsing(true);
-    setMatchedKeywords([]);
-    setEditableKeywords([]);
-    setJobs([]);
-
-    const formData = new FormData();
-    formData.append('file', resumeFile);
-
-    try {
-      const response = await axios.post(`${API_URL}/extract_keywords`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      setMatchedKeywords(response.data.keywords);
-      setEditableKeywords(response.data.keywords);
-      if (response.data.keywords.length === 0) {
-        showToast("⚠ No matching keywords found", 'error');
-      } else {
-        showToast(`✅ Found ${response.data.keywords.length} keywords`, 'success');
-      }
-    } catch (err) {
-      showToast("❌ Error extracting keywords", 'error');
-    } finally {
-      setIsParsing(false);
+  const handlePlatformToggle = (platform) => {
+    console.log(`Toggling ${platform}, current:`, selectedPlatforms);
+    if (selectedPlatforms.includes(platform)) {
+      setSelectedPlatforms(selectedPlatforms.filter(p => p !== platform));
+    } else {
+      setSelectedPlatforms([...selectedPlatforms, platform]);
     }
   };
 
-  const handleScrapeJobs = async () => {  // <-- async here too
-    if (!editableKeywords.length) return showToast("No keywords to search", 'error');
-    if (!location) return showToast("Please enter location", 'error');
+  const removeKeyword = (keyword) => {
+    resume.setEditableKeywords(resume.editableKeywords.filter(k => k !== keyword));
+  };
 
-    setScraping(true);
-    setJobs([]);
-    setProgress(0);
-    setShowStats(true);
-
-    try {
-      const totalKeywords = editableKeywords.length;
-      let allJobs = [];
-
-      for (let i = 0; i < totalKeywords; i++) {
-        setCurrentKeyword(editableKeywords[i]);
-        setProgress(((i + 1) / totalKeywords) * 100);
-
-        const response = await axios.post(`${API_URL}/scrape_jobs`, {
-          keywords: [editableKeywords[i]],
-          location,
-        });
-
-        allJobs = [...allJobs, ...response.data.jobs];
-        setJobs([...allJobs]);
-      }
-
-      showToast(`🎉 Found ${allJobs.length} jobs!`, 'success');
-      triggerConfetti();
-    } catch (err) {
-      showToast("❌ Error scraping jobs", 'error');
-    } finally {
-      setScraping(false);
-      setCurrentKeyword('');
-      setProgress(0);
+  const addKeyword = (keyword) => {
+    if (keyword && !resume.editableKeywords.includes(keyword.toLowerCase())) {
+      resume.setEditableKeywords([...resume.editableKeywords, keyword.toLowerCase()]);
     }
   };
 
-  const handleDownload = (format) => {
-    let content, blob, filename;
-
-    if (format === 'txt') {
-      content = filteredJobs.map(
-        (job, idx) => `${idx + 1}. ${job.title} — ${job.company}\n${job.link}\n`
-      ).join('\n');
-      blob = new Blob([content], { type: 'text/plain' });
-      filename = 'indeed_jobs.txt';
-    } else if (format === 'csv') {
-      content = 'Title,Company,Link\n' + filteredJobs.map(
-        job => `"${job.title}","${job.company}","${job.link}"`
-      ).join('\n');
-      blob = new Blob([content], { type: 'text/csv' });
-      filename = 'indeed_jobs.csv';
-    } else if (format === 'json') {
-      content = JSON.stringify(filteredJobs, null, 2);
-      blob = new Blob([content], { type: 'application/json' });
-      filename = 'indeed_jobs.json';
-    }
-
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    showToast(`✅ Downloaded as ${format.toUpperCase()}`, 'success');
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   const toggleFavorite = (job) => {
@@ -219,41 +90,22 @@ function App() {
     }
   };
 
-  const removeKeyword = (keyword) => {
-    setEditableKeywords(editableKeywords.filter(k => k !== keyword));
-  };
-
-  const addKeyword = (keyword) => {
-    if (keyword && !editableKeywords.includes(keyword.toLowerCase())) {
-      setEditableKeywords([...editableKeywords, keyword.toLowerCase()]);
-    }
-  };
-
-  const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-    document.body.className = newTheme;
-  };
-
-  const uniqueCompanies = [...new Set(jobs.map(j => j.company))].sort();
-  const keywordStats = editableKeywords.map(kw => ({
+  // Computed values
+  const uniqueCompanies = [...new Set(jobs.jobs.map(j => j.company))].sort();
+  const keywordStats = resume.editableKeywords.map(kw => ({
     keyword: kw,
-    count: jobs.filter(j => 
-      j.title.toLowerCase().includes(kw) || 
+    count: jobs.jobs.filter(j =>
+      j.title.toLowerCase().includes(kw) ||
       j.company.toLowerCase().includes(kw)
     ).length
   }));
 
-  const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
-
-
   return (
     <div className="app-container">
       <ParticleBackground />
-      
+
       <div className="glass-card">
-        {/* Header with theme toggle and sound */}
+        {/* Header */}
         <div className="header-controls">
           <button className="icon-btn" onClick={toggleTheme} title="Toggle theme">
             {theme === 'dark' ? '☀️' : '🌙'}
@@ -268,27 +120,27 @@ function App() {
           <p className="subtitle">AI-Powered Resume Analysis & Job Discovery</p>
         </div>
 
-        {/* Section 1: Upload Resume */}
+        {/* Upload Resume */}
         <div className="section">
           <div className="section-header">
             <span className="step-number">01</span>
             <h3>Upload Resume</h3>
           </div>
-          
+
           <div className="upload-area">
             <label className="file-upload-label">
-              <input 
-                type="file" 
-                accept=".pdf" 
-                onChange={handleFileChange} 
-                disabled={isParsing || scraping}
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={resume.handleFileChange}
+                disabled={resume.isParsing || jobs.scraping}
                 className="file-input"
               />
               <div className="upload-box">
-                {resumeFile ? (
+                {resume.resumeFile ? (
                   <div className="file-selected">
                     <span className="file-icon">📄</span>
-                    <span className="file-name">{resumeFile.name}</span>
+                    <span className="file-name">{resume.resumeFile.name}</span>
                   </div>
                 ) : (
                   <div className="upload-prompt">
@@ -298,13 +150,13 @@ function App() {
                 )}
               </div>
             </label>
-            
-            <button 
-              onClick={handleParseResume} 
-              disabled={!resumeFile || isParsing || scraping}
+
+            <button
+              onClick={resume.handleParseResume}
+              disabled={!resume.resumeFile || resume.isParsing || jobs.scraping}
               className="btn btn-primary"
             >
-              {isParsing ? (
+              {resume.isParsing ? (
                 <>
                   <span className="spinner"></span>
                   Analyzing...
@@ -318,8 +170,8 @@ function App() {
           </div>
         </div>
 
-        {/* Editable Keywords */}
-        {editableKeywords.length > 0 && (
+        {/* Keywords */}
+        {resume.editableKeywords.length > 0 && (
           <div className="keywords-container animate-in">
             <div className="keywords-header">
               <h4 className="keywords-title">🎯 Matched Keywords</h4>
@@ -336,7 +188,7 @@ function App() {
               />
             </div>
             <div className="keywords-grid">
-              {editableKeywords.map((keyword, idx) => (
+              {resume.editableKeywords.map((keyword, idx) => (
                 <span key={idx} className="keyword-tag">
                   {keyword}
                   <button className="keyword-remove" onClick={() => removeKeyword(keyword)}>×</button>
@@ -346,19 +198,19 @@ function App() {
           </div>
         )}
 
-        {/* Section 2: Location */}
+        {/* Location */}
         <div className="section">
           <div className="section-header">
             <span className="step-number">02</span>
             <h3>Job Location</h3>
           </div>
-          
-          <input 
-            type="text" 
-            placeholder="🌍 Mumbai, Delhi, Bangalore..." 
-            value={location} 
-            onChange={e => setLocation(e.target.value)} 
-            disabled={scraping || isParsing}
+
+          <input
+            type="text"
+            placeholder="🌍 Mumbai, Delhi, Bangalore..."
+            value={location}
+            onChange={e => setLocation(e.target.value)}
+            disabled={jobs.scraping || resume.isParsing}
             className="location-input"
             list="city-suggestions"
           />
@@ -372,16 +224,32 @@ function App() {
           </datalist>
         </div>
 
+        {/* Platform Selection */}
+        <div className="platform-selector">
+          <h3>Select Platforms:</h3>
+          <div className="platform-chips">
+            {["indeed", "naukri", "linkedin"].map(platform => (
+              <button
+                key={platform}
+                className={`chip ${selectedPlatforms.includes(platform) ? 'active' : ''}`}
+                onClick={() => handlePlatformToggle(platform)}
+              >
+                {platform.charAt(0).toUpperCase() + platform.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Scrape Button */}
         <button
-          onClick={handleScrapeJobs}
-          disabled={!editableKeywords.length || !location || scraping || isParsing}
+          onClick={() => jobs.handleScrapeJobs(resume.editableKeywords, location, selectedPlatforms)}
+          disabled={!resume.editableKeywords.length || !location || jobs.scraping || resume.isParsing}
           className="btn btn-scrape"
         >
-          {scraping ? (
+          {jobs.scraping ? (
             <>
               <span className="spinner"></span>
-              Scraping {currentKeyword}...
+              Scraping {jobs.currentKeyword}...
             </>
           ) : (
             <>
@@ -390,32 +258,32 @@ function App() {
           )}
         </button>
 
-        {/* Progress Bar */}
-        {scraping && <ProgressBar progress={progress} currentKeyword={currentKeyword} />}
+        {/* Progress */}
+        {jobs.scraping && <ProgressBar progress={jobs.progress} currentKeyword={jobs.currentKeyword} />}
 
-        {/* Stats Cards */}
-        {showStats && jobs.length > 0 && (
+        {/* Stats */}
+        {jobs.showStats && jobs.jobs.length > 0 && (
           <div className="stats-grid animate-in">
-            <StatsCard icon="💼" value={filteredJobs.length} label="Jobs Found" />
+            <StatsCard icon="💼" value={jobs.filteredJobs.length} label="Jobs Found" />
             <StatsCard icon="🏢" value={uniqueCompanies.length} label="Companies" />
-            <StatsCard icon="🎯" value={editableKeywords.length} label="Keywords" />
+            <StatsCard icon="🎯" value={resume.editableKeywords.length} label="Keywords" />
             <StatsCard icon="⭐" value={favorites.length} label="Favorites" />
           </div>
         )}
 
-        {/* Filter & Search */}
-        {jobs.length > 0 && (
+        {/* Filter */}
+        {jobs.jobs.length > 0 && (
           <div className="filter-section animate-in">
             <input
               type="text"
               placeholder="🔍 Search jobs..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              value={jobs.searchQuery}
+              onChange={e => jobs.setSearchQuery(e.target.value)}
               className="search-input"
             />
             <select
-              value={filterCompany}
-              onChange={e => setFilterCompany(e.target.value)}
+              value={jobs.filterCompany}
+              onChange={e => jobs.setFilterCompany(e.target.value)}
               className="filter-select"
             >
               <option value="">All Companies</option>
@@ -424,8 +292,8 @@ function App() {
               ))}
             </select>
             <select
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
+              value={jobs.sortBy}
+              onChange={e => jobs.setSortBy(e.target.value)}
               className="filter-select"
             >
               <option value="relevance">Sort by Relevance</option>
@@ -436,25 +304,25 @@ function App() {
         )}
 
         {/* Jobs List */}
-        {filteredJobs.length > 0 && (
+        {jobs.filteredJobs.length > 0 && (
           <div className="jobs-container animate-in">
             <div className="jobs-header">
-              <h3>💼 Jobs Found ({filteredJobs.length})</h3>
+              <h3>💼 Jobs Found ({jobs.filteredJobs.length})</h3>
               <div className="download-buttons">
-                <button onClick={() => handleDownload('txt')} className="btn btn-download" title="Ctrl+D">
+                <button onClick={() => jobs.handleDownload('txt', jobs.filteredJobs)} className="btn btn-download" title="Ctrl+D">
                   TXT
                 </button>
-                <button onClick={() => handleDownload('csv')} className="btn btn-download">
+                <button onClick={() => jobs.handleDownload('csv', jobs.filteredJobs)} className="btn btn-download">
                   CSV
                 </button>
-                <button onClick={() => handleDownload('json')} className="btn btn-download">
+                <button onClick={() => jobs.handleDownload('json', jobs.filteredJobs)} className="btn btn-download">
                   JSON
                 </button>
               </div>
             </div>
-            
+
             <div className="jobs-list">
-              {filteredJobs.map((job, i) => (
+              {jobs.filteredJobs.map((job, i) => (
                 <div key={i} className="job-card">
                   <div className="job-number">{i + 1}</div>
                   <div className="job-details" onClick={() => setSelectedJob(job)}>
@@ -478,8 +346,8 @@ function App() {
           </div>
         )}
 
-        {/* Floating Action Button */}
-        {jobs.length > 0 && (
+        {/* FAB */}
+        {jobs.jobs.length > 0 && (
           <div className="fab-container">
             <button className="fab" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
               ↑
@@ -488,10 +356,10 @@ function App() {
         )}
       </div>
 
-      {/* Toast Notifications */}
+      {/* Toast */}
       {toast.show && <Toast message={toast.message} type={toast.type} />}
 
-      {/* Job Modal */}
+      {/* Modal */}
       {selectedJob && <JobModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
     </div>
   );
