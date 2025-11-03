@@ -1,5 +1,5 @@
 import React from 'react';
-import './JobModal.css';
+import '../styles/JobModal.css';
 
 function JobModal({ job, onClose }) {
   return (

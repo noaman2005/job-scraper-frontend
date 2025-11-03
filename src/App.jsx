@@ -1,12 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 import Toast from './components/Toast';
-import JobModal from './components/JobModal';
-import ProgressBar from './components/ProgressBar';
-import StatsCard from './components/StatsCard';
+import JobDetailModal from './components/JobDetailModal';
 import ParticleBackground from './components/ParticleBackground';
 import { useResume } from './hooks/useResume';
 import { useJobs } from './hooks/useJobs';
+import { useKeywords } from './hooks/useKeywords';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { API_URL } from './services/api';
@@ -20,26 +19,48 @@ function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [toast, setToast] = useState({ show: false, message: '', type: '' });
   const [selectedJob, setSelectedJob] = useState(null);
+  const [currentStep, setCurrentStep] = useState(1);
+  const [platformFilter, setPlatformFilter] = useState('');
 
   // Hooks
   const resume = useResume(API_URL, showToast);
   const jobs = useJobs(API_URL, showToast);
+  const keywordsManager = useKeywords();
 
   // Apply theme
   React.useEffect(() => {
     document.body.className = theme;
   }, [theme]);
 
+  // Update current step based on data
+  React.useEffect(() => {
+    if (resume.editableKeywords.length > 0 || keywordsManager.customKeywords.length > 0) {
+      setCurrentStep(2);
+    }
+    if (selectedPlatforms.length > 0) {
+      setCurrentStep(3);
+    }
+    if (location) {
+      setCurrentStep(4);
+    }
+    if (jobs.scraping) {
+      setCurrentStep(5);
+    }
+    if (jobs.jobs.length > 0) {
+      setCurrentStep(6);
+    }
+  }, [resume.editableKeywords, keywordsManager.customKeywords, selectedPlatforms, location, jobs.scraping, jobs.jobs]);
+
   // Keyboard shortcuts
   useKeyboardShortcuts(
-    resume.editableKeywords,
+    [...resume.editableKeywords, ...keywordsManager.customKeywords],
     location,
     jobs.filteredJobs,
-    () => jobs.handleScrapeJobs(resume.editableKeywords, location, selectedPlatforms),
+    () => handleScrape(),
     (format) => jobs.handleDownload(format, jobs.filteredJobs)
   );
 
-  // Helper functions
+  // Helpers
   function showToast(message, type = 'info') {
     setToast({ show: true, message, type });
     if (soundEnabled) playSound(type);
@@ -90,45 +111,90 @@ function App() {
     }
   };
 
+  const handleScrape = () => {
+    const allKeywords = [
+      ...new Set([
+        ...resume.editableKeywords,
+        ...keywordsManager.customKeywords
+      ])
+    ];
+
+    if (allKeywords.length === 0) {
+      showToast('Add resume or custom keywords first', 'error');
+      return;
+    }
+
+    if (!location) {
+      showToast('Please enter location', 'error');
+      return;
+    }
+
+    if (selectedPlatforms.length === 0) {
+      showToast('Select at least one platform', 'error');
+      return;
+    }
+
+    setCurrentStep(5);
+    jobs.handleScrapeJobs(allKeywords, location, selectedPlatforms);
+  };
+
   // Computed values
   const uniqueCompanies = [...new Set(jobs.jobs.map(j => j.company))].sort();
-  const keywordStats = resume.editableKeywords.map(kw => ({
-    keyword: kw,
-    count: jobs.jobs.filter(j =>
-      j.title.toLowerCase().includes(kw) ||
-      j.company.toLowerCase().includes(kw)
-    ).length
-  }));
+  let filteredJobsForDisplay = [...jobs.filteredJobs];
+
+  // Apply platform filter
+  if (platformFilter) {
+    filteredJobsForDisplay = filteredJobsForDisplay.filter(
+      job => job.platform === platformFilter
+    );
+  }
 
   return (
     <div className="app-container">
       <ParticleBackground />
 
-      <div className="glass-card">
+      <div className="main-wrapper">
         {/* Header */}
-        <div className="header-controls">
-          <button className="icon-btn" onClick={toggleTheme} title="Toggle theme">
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          <button className="icon-btn" onClick={() => setSoundEnabled(!soundEnabled)} title="Toggle sound">
-            {soundEnabled ? '🔊' : '🔇'}
-          </button>
-        </div>
-
-        <div className="title-section">
-          <h1 className="neon-title">🌐 SMART JOB SCRAPER</h1>
-          <p className="subtitle">AI-Powered Resume Analysis & Job Discovery</p>
-        </div>
-
-        {/* Upload Resume */}
-        <div className="section">
-          <div className="section-header">
-            <span className="step-number">01</span>
-            <h3>Upload Resume</h3>
+        <div className="header">
+          <div className="header-left">
+            <h1>🌐 Smart Job Scraper</h1>
+            <p>AI-powered resume analysis & job discovery</p>
           </div>
+          <div className="header-controls">
+            <button className="icon-btn" onClick={toggleTheme} title="Toggle theme">
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+            <button className="icon-btn" onClick={() => setSoundEnabled(!soundEnabled)} title="Toggle sound">
+              {soundEnabled ? '🔊' : '🔇'}
+            </button>
+          </div>
+        </div>
 
-          <div className="upload-area">
-            <label className="file-upload-label">
+        {/* Progress Stepper */}
+        <div className="stepper">
+          {[
+            { num: 1, label: 'Resume' },
+            { num: 2, label: 'Keywords' },
+            { num: 3, label: 'Platforms' },
+            { num: 4, label: 'Location' },
+            { num: 5, label: 'Scrape' },
+            { num: 6, label: 'Results' }
+          ].map(step => (
+            <div key={step.num} className={`step ${currentStep >= step.num ? 'active' : ''} ${currentStep > step.num ? 'completed' : ''}`}>
+              <div className="step-circle">{currentStep > step.num ? '✓' : step.num}</div>
+              <div className="step-label">{step.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Step 1: Upload Resume */}
+        <div className="card-section">
+          <div className="card-title" data-icon="📄">Upload Your Resume (Optional)</div>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+            Upload a PDF resume to auto-extract skills, or add keywords manually below
+          </p>
+          <div className="upload-container">
+            <label className="upload-box" style={{ flex: 1 }}>
               <input
                 type="file"
                 accept=".pdf"
@@ -136,222 +202,352 @@ function App() {
                 disabled={resume.isParsing || jobs.scraping}
                 className="file-input"
               />
-              <div className="upload-box">
-                {resume.resumeFile ? (
-                  <div className="file-selected">
-                    <span className="file-icon">📄</span>
-                    <span className="file-name">{resume.resumeFile.name}</span>
-                  </div>
-                ) : (
-                  <div className="upload-prompt">
-                    <span className="upload-icon">📤</span>
-                    <span>Click or drag PDF here</span>
-                  </div>
-                )}
-              </div>
-            </label>
-
-            <button
-              onClick={resume.handleParseResume}
-              disabled={!resume.resumeFile || resume.isParsing || jobs.scraping}
-              className="btn btn-primary"
-            >
-              {resume.isParsing ? (
-                <>
-                  <span className="spinner"></span>
-                  Analyzing...
-                </>
+              {resume.resumeFile ? (
+                <div className="file-selected">
+                  <span className="file-icon">✓</span>
+                  <span className="file-name">{resume.resumeFile.name}</span>
+                </div>
               ) : (
                 <>
-                  <span>⚡</span> Analyze Resume
+                  <span className="upload-icon">📤</span>
+                  <span className="upload-text">Click to upload or drag & drop your PDF here</span>
                 </>
               )}
-            </button>
+            </label>
+            {resume.resumeFile && (
+              <button
+                onClick={resume.handleParseResume}
+                disabled={!resume.resumeFile || resume.isParsing || jobs.scraping}
+                className="btn btn-primary"
+                style={{ alignSelf: 'center', whiteSpace: 'nowrap' }}
+              >
+                {resume.isParsing ? (
+                  <>
+                    <span className="spinner"></span>
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    ⚡ Analyze Resume
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Keywords */}
+        {/* Step 2A: Resume Keywords */}
         {resume.editableKeywords.length > 0 && (
-          <div className="keywords-container animate-in">
-            <div className="keywords-header">
-              <h4 className="keywords-title">🎯 Matched Keywords</h4>
-              <input
-                type="text"
-                placeholder="Add keyword..."
-                className="keyword-input"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    addKeyword(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-              />
-            </div>
-            <div className="keywords-grid">
+          <div className="card-section">
+            <div className="card-title" data-icon="📋">Resume Keywords ({resume.editableKeywords.length})</div>
+            <div className="keyword-cloud">
               {resume.editableKeywords.map((keyword, idx) => (
                 <span key={idx} className="keyword-tag">
                   {keyword}
-                  <button className="keyword-remove" onClick={() => removeKeyword(keyword)}>×</button>
+                  <button onClick={() => removeKeyword(keyword)}>×</button>
                 </span>
               ))}
             </div>
           </div>
         )}
 
-        {/* Location */}
-        <div className="section">
-          <div className="section-header">
-            <span className="step-number">02</span>
-            <h3>Job Location</h3>
+        {/* Step 2B: Custom Keywords */}
+        <div className="card-section">
+          <div className="card-title" data-icon="✨">Add Custom Keywords</div>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+            Don't have a resume? Add keywords manually to get started!
+          </p>
+          <div className="keyword-input-container">
+            <input
+              type="text"
+              placeholder="Enter keyword (e.g., React, Django, AWS)..."
+              className="keyword-input"
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  if (keywordsManager.addCustomKeyword(e.target.value)) {
+                    showToast(`✅ Added "${e.target.value}"`, 'success');
+                    e.target.value = '';
+                  } else {
+                    showToast('Keyword already added', 'error');
+                    e.target.value = '';
+                  }
+                }
+              }}
+            />
           </div>
 
-          <input
-            type="text"
-            placeholder="🌍 Mumbai, Delhi, Bangalore..."
-            value={location}
-            onChange={e => setLocation(e.target.value)}
-            disabled={jobs.scraping || resume.isParsing}
-            className="location-input"
-            list="city-suggestions"
-          />
-          <datalist id="city-suggestions">
-            <option value="Mumbai" />
-            <option value="Delhi" />
-            <option value="Bangalore" />
-            <option value="Hyderabad" />
-            <option value="Pune" />
-            <option value="Chennai" />
-          </datalist>
+          {keywordsManager.customKeywords.length > 0 && (
+            <>
+              <h4 style={{ marginTop: '1.5rem', marginBottom: '1rem', fontSize: '0.95rem', color: 'var(--text)' }}>
+                Your Custom Keywords
+              </h4>
+              <div className="keyword-cloud">
+                {keywordsManager.customKeywords.map((keyword, idx) => (
+                  <span key={idx} className="keyword-tag">
+                    {keyword}
+                    <button onClick={() => keywordsManager.removeCustomKeyword(keyword)}>×</button>
+                  </span>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  keywordsManager.clearCustomKeywords();
+                  showToast('Cleared all custom keywords', 'info');
+                }}
+                className="btn btn-secondary"
+                style={{ marginTop: '1rem', fontSize: '0.85rem', padding: '0.6rem 1rem' }}
+              >
+                Clear All Custom Keywords
+              </button>
+            </>
+          )}
         </div>
 
-        {/* Platform Selection */}
-        <div className="platform-selector">
-          <h3>Select Platforms:</h3>
-          <div className="platform-chips">
-            {["indeed", "naukri", "linkedin"].map(platform => (
+        {/* All Keywords Summary */}
+        {(resume.editableKeywords.length > 0 || keywordsManager.customKeywords.length > 0) && (
+          <div className="card-section" style={{ background: 'rgba(102, 126, 234, 0.1)', borderColor: 'rgba(102, 126, 234, 0.3)' }}>
+            <div className="card-title" data-icon="🎯">
+              Total Keywords: {resume.editableKeywords.length + keywordsManager.customKeywords.length}
+            </div>
+            <div className="keyword-cloud">
+              {[...resume.editableKeywords, ...keywordsManager.customKeywords].map((keyword, idx) => (
+                <span key={idx} className="keyword-tag" style={{ background: 'rgba(102, 126, 234, 0.2)', borderColor: 'rgba(102, 126, 234, 0.5)' }}>
+                  {keyword}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Platforms */}
+        <div className="card-section">
+          <div className="card-title" data-icon="🌍">Select Job Platforms</div>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+            Select one or more platforms to scrape jobs simultaneously
+          </p>
+          <div className="platform-grid">
+            {[
+              { name: 'indeed', icon: '💼', label: 'Indeed' },
+              { name: 'naukri', icon: '🇮🇳', label: 'Naukri' },
+              { name: 'linkedin', icon: '🔗', label: 'LinkedIn' }
+            ].map(platform => (
               <button
-                key={platform}
-                className={`chip ${selectedPlatforms.includes(platform) ? 'active' : ''}`}
-                onClick={() => handlePlatformToggle(platform)}
+                key={platform.name}
+                className={`platform-btn ${selectedPlatforms.includes(platform.name) ? 'active' : ''}`}
+                onClick={() => handlePlatformToggle(platform.name)}
               >
-                {platform.charAt(0).toUpperCase() + platform.slice(1)}
+                <span className="platform-icon">{platform.icon}</span>
+                {platform.label}
               </button>
             ))}
           </div>
+          {selectedPlatforms.length > 0 && (
+            <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--success)' }}>
+              ✓ {selectedPlatforms.length} platform(s) selected: {selectedPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ')}
+            </p>
+          )}
         </div>
 
-        {/* Scrape Button */}
-        <button
-          onClick={() => jobs.handleScrapeJobs(resume.editableKeywords, location, selectedPlatforms)}
-          disabled={!resume.editableKeywords.length || !location || jobs.scraping || resume.isParsing}
-          className="btn btn-scrape"
-        >
-          {jobs.scraping ? (
-            <>
-              <span className="spinner"></span>
-              Scraping {jobs.currentKeyword}...
-            </>
-          ) : (
-            <>
-              <span>🚀</span> Start Scraping <span className="shortcut-hint">Ctrl+S</span>
-            </>
-          )}
-        </button>
+        {/* Step 4: Location */}
+        <div className="card-section">
+          <div className="card-title" data-icon="📍">Job Location</div>
+          <div className="location-input-wrapper">
+            <input
+              type="text"
+              placeholder="Enter city (e.g., Mumbai, Delhi, Bangalore)"
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              disabled={jobs.scraping || resume.isParsing}
+              className="location-input"
+              list="cities"
+            />
+            <datalist id="cities">
+              <option value="Mumbai" />
+              <option value="Delhi" />
+              <option value="Bangalore" />
+              <option value="Hyderabad" />
+              <option value="Pune" />
+              <option value="Chennai" />
+              <option value="Kolkata" />
+              <option value="Ahmedabad" />
+              <option value="Remote" />
+            </datalist>
+          </div>
+        </div>
 
-        {/* Progress */}
-        {jobs.scraping && <ProgressBar progress={jobs.progress} currentKeyword={jobs.currentKeyword} />}
+        {/* Step 5: Scrape Button */}
+        {(resume.editableKeywords.length > 0 || keywordsManager.customKeywords.length > 0) && location && selectedPlatforms.length > 0 && (
+          <button
+            onClick={handleScrape}
+            disabled={jobs.scraping}
+            className="btn btn-primary"
+            style={{ width: '100%', padding: '1rem', fontSize: '1rem', marginBottom: '2rem' }}
+          >
+            {jobs.scraping ? (
+              <>
+                <span className="spinner"></span>
+                Scraping {jobs.currentKeyword || 'jobs'}...
+              </>
+            ) : (
+              <>
+                🚀 Start Scraping (Ctrl+S)
+              </>
+            )}
+          </button>
+        )}
+
+        {/* Progress Bar */}
+        {jobs.scraping && (
+          <div className="progress-container">
+            <div className="progress-info">
+              <span>Scraping progress</span>
+              <span>{Math.round(jobs.progress)}%</span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${jobs.progress}%` }}></div>
+            </div>
+          </div>
+        )}
 
         {/* Stats */}
         {jobs.showStats && jobs.jobs.length > 0 && (
-          <div className="stats-grid animate-in">
-            <StatsCard icon="💼" value={jobs.filteredJobs.length} label="Jobs Found" />
-            <StatsCard icon="🏢" value={uniqueCompanies.length} label="Companies" />
-            <StatsCard icon="🎯" value={resume.editableKeywords.length} label="Keywords" />
-            <StatsCard icon="⭐" value={favorites.length} label="Favorites" />
+          <div className="stats-grid">
+            <div className="stat-card">
+              <span className="stat-icon">💼</span>
+              <div className="stat-value">{filteredJobsForDisplay.length}</div>
+              <div className="stat-label">Jobs Found</div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">🏢</span>
+              <div className="stat-value">{uniqueCompanies.length}</div>
+              <div className="stat-label">Companies</div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">🎯</span>
+              <div className="stat-value">{resume.editableKeywords.length + keywordsManager.customKeywords.length}</div>
+              <div className="stat-label">Keywords</div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">⭐</span>
+              <div className="stat-value">{favorites.length}</div>
+              <div className="stat-label">Favorites</div>
+            </div>
           </div>
         )}
 
-        {/* Filter */}
+        {/* Step 6: Results */}
         {jobs.jobs.length > 0 && (
-          <div className="filter-section animate-in">
-            <input
-              type="text"
-              placeholder="🔍 Search jobs..."
-              value={jobs.searchQuery}
-              onChange={e => jobs.setSearchQuery(e.target.value)}
-              className="search-input"
-            />
-            <select
-              value={jobs.filterCompany}
-              onChange={e => jobs.setFilterCompany(e.target.value)}
-              className="filter-select"
-            >
-              <option value="">All Companies</option>
-              {uniqueCompanies.map((company, idx) => (
-                <option key={idx} value={company}>{company}</option>
-              ))}
-            </select>
-            <select
-              value={jobs.sortBy}
-              onChange={e => jobs.setSortBy(e.target.value)}
-              className="filter-select"
-            >
-              <option value="relevance">Sort by Relevance</option>
-              <option value="company">Sort by Company</option>
-              <option value="title">Sort by Title</option>
-            </select>
-          </div>
-        )}
+          <>
+            <div className="jobs-container">
+              <div className="jobs-header">
+                <h3>💼 Job Results ({filteredJobsForDisplay.length})</h3>
+                <div className="download-buttons">
+                  <button onClick={() => jobs.handleDownload('txt', filteredJobsForDisplay)} className="btn btn-download" title="Download as text">
+                    📄 TXT
+                  </button>
+                  <button onClick={() => jobs.handleDownload('csv', filteredJobsForDisplay)} className="btn btn-download" title="Download as CSV">
+                    📊 CSV
+                  </button>
+                  <button onClick={() => jobs.handleDownload('json', filteredJobsForDisplay)} className="btn btn-download" title="Download as JSON">
+                    📋 JSON
+                  </button>
+                </div>
+              </div>
 
-        {/* Jobs List */}
-        {jobs.filteredJobs.length > 0 && (
-          <div className="jobs-container animate-in">
-            <div className="jobs-header">
-              <h3>💼 Jobs Found ({jobs.filteredJobs.length})</h3>
-              <div className="download-buttons">
-                <button onClick={() => jobs.handleDownload('txt', jobs.filteredJobs)} className="btn btn-download" title="Ctrl+D">
-                  TXT
-                </button>
-                <button onClick={() => jobs.handleDownload('csv', jobs.filteredJobs)} className="btn btn-download">
-                  CSV
-                </button>
-                <button onClick={() => jobs.handleDownload('json', jobs.filteredJobs)} className="btn btn-download">
-                  JSON
-                </button>
+              {/* Filter */}
+              {jobs.jobs.length > 0 && (
+                <div className="filter-bar">
+                  <input
+                    type="text"
+                    placeholder="🔍 Search jobs..."
+                    value={jobs.searchQuery}
+                    onChange={e => jobs.setSearchQuery(e.target.value)}
+                    className="filter-input"
+                  />
+                  <select
+                    value={platformFilter}
+                    onChange={e => setPlatformFilter(e.target.value)}
+                    className="filter-select"
+                  >
+                    <option value="">All Platforms</option>
+                    <option value="Indeed">Indeed</option>
+                    <option value="Naukri">Naukri</option>
+                    <option value="LinkedIn">LinkedIn</option>
+                  </select>
+                  <select
+                    value={jobs.filterCompany}
+                    onChange={e => jobs.setFilterCompany(e.target.value)}
+                    className="filter-select"
+                  >
+                    <option value="">All Companies</option>
+                    {uniqueCompanies.map((company, idx) => (
+                      <option key={idx} value={company}>{company}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={jobs.sortBy}
+                    onChange={e => jobs.setSortBy(e.target.value)}
+                    className="filter-select"
+                  >
+                    <option value="relevance">Sort by Relevance</option>
+                    <option value="company">Sort by Company</option>
+                    <option value="title">Sort by Title</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Jobs Grid */}
+              <div className="jobs-grid">
+                {filteredJobsForDisplay.length > 0 ? (
+                  filteredJobsForDisplay.map((job, i) => (
+                    <div key={i} className="job-card">
+                      <div className="job-header">
+                        <div style={{ flex: 1 }}>
+                          <h4
+                            className="job-title"
+                            onClick={() => setSelectedJob(job)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            {job.title}
+                          </h4>
+                          <p className="job-company">{job.company}</p>
+                        </div>
+                        {job.platform && (
+                          <div className="platform-badge">{job.platform}</div>
+                        )}
+                      </div>
+                      <div className="job-actions">
+                        <button
+                          className={`btn-favorite ${favorites.some(f => f.link === job.link) ? 'active' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavorite(job);
+                          }}
+                        >
+                          {favorites.some(f => f.link === job.link) ? '⭐' : '☆'}
+                        </button>
+                        <a href={job.link} target="_blank" rel="noopener noreferrer" className="btn-visit">
+                          View Job →
+                        </a>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                    <p>No jobs found with the selected filters</p>
+                  </div>
+                )}
               </div>
             </div>
-
-            <div className="jobs-list">
-              {jobs.filteredJobs.map((job, i) => (
-                <div key={i} className="job-card">
-                  <div className="job-number">{i + 1}</div>
-                  <div className="job-details" onClick={() => setSelectedJob(job)}>
-                    <h4 className="job-title">{job.title}</h4>
-                    <p className="job-company">🏢 {job.company}</p>
-                  </div>
-                  <div className="job-actions">
-                    <button
-                      className={`icon-btn-small ${favorites.some(f => f.link === job.link) ? 'active' : ''}`}
-                      onClick={() => toggleFavorite(job)}
-                    >
-                      {favorites.some(f => f.link === job.link) ? '⭐' : '☆'}
-                    </button>
-                    <a href={job.link} target="_blank" rel="noopener noreferrer" className="job-arrow">
-                      →
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          </>
         )}
 
-        {/* FAB */}
-        {jobs.jobs.length > 0 && (
-          <div className="fab-container">
-            <button className="fab" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-              ↑
-            </button>
+        {/* No Results Message */}
+        {!jobs.scraping && jobs.jobs.length === 0 && resume.editableKeywords.length === 0 && keywordsManager.customKeywords.length === 0 && (
+          <div className="card-section" style={{ textAlign: 'center', padding: '3rem' }}>
+            <p style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>
+              👈 Start by uploading your resume or adding custom keywords to begin searching for jobs!
+            </p>
           </div>
         )}
       </div>
@@ -359,8 +555,10 @@ function App() {
       {/* Toast */}
       {toast.show && <Toast message={toast.message} type={toast.type} />}
 
-      {/* Modal */}
-      {selectedJob && <JobModal job={selectedJob} onClose={() => setSelectedJob(null)} />}
+      {/* Job Detail Modal */}
+      {selectedJob && (
+        <JobDetailModal job={selectedJob} onClose={() => setSelectedJob(null)} />
+      )}
     </div>
   );
 }
